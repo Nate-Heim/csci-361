@@ -45,7 +45,7 @@ CHIP CPU {
 Not(in=instruction[15], out=isA); // isA = 1 if A-instruction, 0 if C-instruction
 
 // isC is the opposite of isA
-// It indicates if we are dealing with a C-instruction
+// This indicates if we are dealing with a C-instruction
 Not(in=isA, out=isC); // isC = 1 if C-instruction, 0 if A-instruction
 
 // ALUtoA determines if the ALU output should be stored in the ARegister
@@ -78,7 +78,7 @@ ARegister(in=outMu, load=loadA, out=A, out=out); // A = outMu when loadA = 1
 // If instruction[12] = 0, use the A register
 // If instruction[12] = 1, use the value from memory 
 //at address A (M)
-Mux16(a=A, b=inM, sel=instruction[12], out=AorM); // AM = A if instruction[12] = 0, M if instruction[12] = 1
+Mux16(a=A, b=inM, sel=instruction[12], out=AorM); // AorM = A if instruction[12] = 0, M if instruction[12] = 1
 
 // ========== DREGISTER ==========
 
@@ -93,8 +93,8 @@ DRegister(in=outMu, load=loadD, out=D); // D = outMu when loadD = 1
 // ========== ALU (ARITHMETIC LOGIC UNIT) ==========
 
 // The ALU performs computations
-// It takes inputs from the DRegister as well either A or M (selected above)
-// Control signals are derived from the instruction to define the operation
+// It takes inputs from the DRegister as well either A or M (we computed this above)
+// Control signals are being derived from the instruction to define the ALU
 ALU(
     x=D,                // First operand is D
     y=AorM,               // Second operand is either A or M
