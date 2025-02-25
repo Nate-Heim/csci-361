@@ -1,0 +1,165 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/5/CPU.hdl
+/**
+ * The Hack Central Processing unit (CPU).
+ * Parses the binary code in the instruction input and 
+ * executes it according to the Hack machine language specification. 
+ * In the case of a C-instruction, computes the
+ * function specified by the instruction. If the instruction
+ * specifies to read a memory value, the inM input is 
+ * expected to contain this value. 
+ * If the instruction specifies to write a value to the 
+ * memory, sets the outM output to this value, sets the 
+ * addressM output to the target address, and asserts 
+ * the writeM output (when writeM = 0, any value may 
+ * appear in outM).
+ * If the reset input is 0, computes the address of the next instruction and sets the
+ * pc output to that value. If the reset input is 1, sets pc to 0.
+ * Note: The outM and writeM outputs are combinational: 
+ * they are affected by the instruction's execution 
+ * during the current cycle. The addressM and pc outputs 
+ * are clocked: although they are affected by the 
+ * instruction's execution, they commit to their new 
+ * values only in the next cycle.
+ */
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+	// ========== FLAG FOR AREGISTER ==========
+
+// Determine if the instruction is an A-instruction or C-instruction
+// A-instructions have the 15th bit as 0, while C-instructions have it as 1
+Not(in=instruction[15], out=isA); // isA = 1 if A-instruction, 0 if C-instruction
+
+// isC is the opposite of isA
+// It indicates if we are dealing with a C-instruction
+Not(in=isA, out=isC); // isC = 1 if C-instruction, 0 if A-instruction
+
+// ALUtoA determines if the ALU output should be stored in the ARegister
+// This happens in C-instructions when instruction[5] is set
+And(a=isC, b=instruction[5], out=ALUtoA); // ALUtoA = 1 when C-instruction and ALU output goes to A
+
+// ========== MUX FOR AREGISTER INPUT ==========
+
+// This Mux selects the input for the ARegister
+// If it's an A-instruction, we use the instruction value itself
+// If it's a C-instruction, we use the ALU output
+Mux16(a=ALUout, b=instruction, sel=isA, out=outMu); // outMu = ALUout if C-instruction, instruction if A-instruction
+
+// ========== AREGISTER ==========
+
+// Determine when to load the ARegister
+// ARegister is loaded when:
+//   - It is an A-instruction (isA = 1), or
+//   - The ALU result should be stored in A (ALUtoA = 1)
+Or(a=ALUtoA, b=isA, out=loadA); // loadA = 1 if A-instruction or ALU result to A
+
+// The ARegister itself, which holds values for addressing or computation
+// Input is outMu (from the Mux above)
+// It loads a new value when loadA is 1
+ARegister(in=outMu, load=loadA, out=A, out=out); // A = outMu when loadA = 1
+
+// ========== MNEMONIC (A OR M) SELECTION ==========
+
+// Selects between the A register or memory (M) for computation
+// If instruction[12] = 0, use the A register
+// If instruction[12] = 1, use the value from memory 
+//at address A (M)
+Mux16(a=A, b=inM, sel=instruction[12], out=AorM); // AM = A if instruction[12] = 0, M if instruction[12] = 1
+
+// ========== DREGISTER ==========
+
+// Determine if the DRegister should be loaded
+// This happens in C-instructions when instruction[4] is set
+And(a=isC, b=instruction[4], out=loadD); // loadD = 1 when C-instruction and D should be loaded
+
+// The DRegister holds the D value used in computations
+// It loads a new value when loadD is 1
+DRegister(in=outMu, load=loadD, out=D); // D = outMu when loadD = 1
+
+// ========== ALU (ARITHMETIC LOGIC UNIT) ==========
+
+// The ALU performs computations
+// It takes inputs from the DRegister as well either A or M (selected above)
+// Control signals are derived from the instruction to define the operation
+ALU(
+    x=D,                // First operand is D
+    y=AorM,               // Second operand is either A or M
+    zx=instruction[11], // Zero x input if 1
+    nx=instruction[10], // Negate x input if 1
+    zy=instruction[9],  // Zero y input if 1
+    ny=instruction[8],  // Negate y input if 1
+    f=instruction[7],   // Function: Add (1) or And (0)
+    no=instruction[6],  // Negate output if 1
+    out=ALUout,         // Result of the computation
+    zr=zr,              // Zero flag (1 if result is 0)
+    ng=ng               // Negative flag (1 if result is negative)
+);
+
+// ========== MEMORY OUTPUT (outM) ==========
+
+// outM holds the output to be written to memory (if needed)
+// It directly passes the ALU output (internal pin configuration requirement)
+Or16(a=false, b=ALUout, out=outM); // outM = ALUout
+
+// ========== MEMORY WRITE ENABLE (writeM) ==========
+
+// Determines if memory should be written to
+// This happens in C-instructions when instruction[3] is set
+And(a=isC, b=instruction[3], out=writeM); // writeM = 1 when C-instruction and writing to memory
+
+// ========== MEMORY ADDRESS (addressM) ==========
+
+// Sets the memory address using the ARegister value
+// Only the lower 15 bits are used for addressing
+Or16(a=false, b=A, out[0..14]=addressM); // addressM = A[0..14]
+
+// ========== PROGRAM COUNTER (PC) AND JUMP LOGIC ==========
+
+// Jump logic is used to decide if the program counter 
+//should jump
+// The conditions depend on the ALU output flags (zr and ng)
+
+// Check if the result is positive (> 0)
+Not(in=zr, out=nZr);          // nZr = 1 if result is nonzero
+Not(in=ng, out=nNg);          // nNg = 1 if result is non-negative
+And(a=nZr, b=nNg, out=isPositive); // isPositive = 1 if result > 0
+
+// JGT (Jump if Greater Than)
+And(a=isPositive, b=instruction[0], out=JGT); // JGT = 1 if result > 0 and jump condition for JGT is set
+
+// JEQ (Jump if Equal)
+And(a=zr, b=instruction[1], out=JEQ); // JEQ = 1 if result == 0 and jump condition for JEQ is set
+
+// JLT (Jump if Less Than)
+And(a=ng, b=instruction[2], out=JLT); // JLT = 1 if result < 0 and jump condition for JLT is set
+
+// Combine the jump conditions
+Or(a=JGT, b=JLT, out=JNE);      // JNE = 1 if result != 0 and a jump condition (JGT or JLT) is set
+Or(a=JNE, b=JEQ, out=isJump);   // isJump = 1 if any jump condition is met (JGT, JLT, or JEQ)
+And(a=isC, b=isJump, out=loadPc); // loadPc = 1 if it's a C-instruction and jump condition is met
+
+// The Program Counter (PC) itself
+// It increments automatically to the next instruction 
+//unless loadPc or reset is set
+PC(
+    in=A,              // Jump target address is taken from the ARegister
+    load=loadPc,       // Load new address if a jump condition is met
+    inc=true,          // Increment PC automatically for the next instruction
+    reset=reset,       // Reset PC to 0 (e.g., on system startup or reset command)
+    out[0..14]=pc      // Output current program counter value (15-bit address space)
+);
+}
